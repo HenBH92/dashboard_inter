@@ -10,12 +10,12 @@ st.set_page_config(page_title="Dashboard Banco Inter", layout="wide")
 
 
 # --- Funções de carga e geocodificação ---
-@st.cache_data
+#@st.cache_data
 def load_data(path):
     return pd.read_excel(path)
 
 
-@st.cache_data
+#@st.cache_data
 def geocode_comarcas(comarcas):
     geolocator = Nominatim(user_agent="dashboard_app")
     records = []
