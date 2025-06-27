@@ -15,7 +15,7 @@ def load_data(path):
     return pd.read_excel(path)
 
 
-#@st.cache_data
+@st.cache_data
 def geocode_comarcas(comarcas):
     geolocator = Nominatim(user_agent="dashboard_app")
     records = []
