@@ -6,6 +6,8 @@ import plotly.express as px
 from streamlit_plotly_events import plotly_events
 import io
 import os
+import plotly.graph_objects as go
+
 
 # --- Configurações iniciais ---
 st.set_page_config(page_title="Dashboard Banco Inter", layout="wide")
@@ -216,17 +218,31 @@ with tab1:
     # --- Lista de processos por comarca ---
     st.markdown("---")
     st.markdown("<h3 style='color:#201747'>Processos por Comarca</h3>", unsafe_allow_html=True)
+
     comarcas_list = counts.sort_values(by='Processos', ascending=False)['Comarca']
     selected = st.selectbox("Selecione uma Comarca", comarcas_list)
+
     df_sel = df_full[df_full['Comarca'] == selected][
         ['Nº processo principal', 'Adverso principal', 'Empregado Próprio']
     ].copy()
+
+    # Renomeando os títulos das colunas para exibição
+    df_sel.rename(columns={
+        'Nº processo principal': 'Número do Processo',
+        'Adverso principal': 'Reclamante',
+        'Empregado Próprio': 'Empregado Próprio'
+    }, inplace=True)
+
+    # Ajustando o índice para começar em 1
     df_sel.index = range(1, len(df_sel) + 1)
+
     st.dataframe(df_sel, use_container_width=True, height=300)
 
     # --- Pizza: tipos de vínculo ---
     st.markdown("---")
-    st.markdown("### Distribuição Geral por Tipo de Empregado")
+    st.markdown("<h3 style='text-align:center; color:#201747'>Distribuição Geral por Tipo de Empregado</h3>",
+                unsafe_allow_html=True)
+
     df_vinculo = df_full.copy()
     df_vinculo['Empregado Próprio'] = df_vinculo['Empregado Próprio'].astype(str).str.strip().str.lower()
     df_vinculo['Terceirizada / Inter Pag'] = df_vinculo['Terceirizada / Inter Pag'].astype(str).str.lower().fillna('')
@@ -254,7 +270,11 @@ with tab1:
     )
     fig_pizza_emp.update_traces(textinfo='label+percent', pull=[0.05] * len(dados_pizza))
     fig_pizza_emp.update_layout(width=800, height=600)
-    st.plotly_chart(fig_pizza_emp, use_container_width=False)
+
+    # Centralizando o gráfico na página
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.plotly_chart(fig_pizza_emp, use_container_width=True)
 
     # --- Distribuição por mês ---
     st.markdown("---")
@@ -330,7 +350,7 @@ with tab1:
 
 # --- Aba Análise de Objetos ---
 with tab2:
-    st.markdown("<h2 style='color:#201747'>Análise de Objetos dos Pedidos</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#201747'>Principais Pedidos de Empregados Próprios</h2>", unsafe_allow_html=True)
 
     # Filtra empregados próprios com segurança
     df_proprio = df_full[df_full['Empregado Próprio'].astype(str).str.strip().str.lower() == 'sim'].copy()
@@ -361,31 +381,75 @@ with tab2:
         )
         st.plotly_chart(fig_obj, use_container_width=True)
 
+        # 🎯 NOVO: Gráfico de Pizza com Top 5 objetos
+        st.markdown("<h4 style='color:#201747'>Distribuição dos 5 Principais Pedidos</h4>", unsafe_allow_html=True)
+        top_5_objs = obj_counts.head(5)
+        fig_pie = px.pie(
+            top_5_objs,
+            names='Objeto',
+            values='Incidência',
+            color_discrete_sequence=px.colors.sequential.Oranges,
+            hole=0.3
+        )
+        fig_pie.update_layout(
+            showlegend=True,
+            plot_bgcolor="white",
+            paper_bgcolor="white"
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+
         # Filtro interativo por tipo de empregado e objeto
         st.markdown("<h4 style='color:#201747'>Filtrar por Objeto</h4>", unsafe_allow_html=True)
-        tipo_empregado = st.radio("Tipo de empregado:", ["Todos", "Próprio", "Terceirizado"], horizontal=True)
+        tipo_empregado = st.radio(
+            "Tipo de empregado:",
+            ["Todos", "Próprio", "Terceirizado", "Inter Pag"],
+            horizontal=True
+        )
+
+
+        # --- Preparando todos os objetos possíveis, considerando o separador '|'
+        def extrair_objetos_unicos(series_objetos):
+            objetos_unicos = set()
+            for linha in series_objetos.dropna():
+                for obj in linha.split('|'):
+                    objeto_limpo = obj.strip()
+                    if objeto_limpo:
+                        objetos_unicos.add(objeto_limpo)
+            return sorted(objetos_unicos)
+
+
+        todos_objetos = extrair_objetos_unicos(df_full[obj_col])
 
         if st.checkbox("Selecionar todos", value=False):
-            sel_objs = obj_counts['Objeto'].tolist()
+            sel_objs = todos_objetos
         else:
             sel_objs = st.multiselect(
                 "Selecionar objetos específicos",
-                obj_counts['Objeto'].tolist(),
-                default=obj_counts['Objeto'].head(3).tolist()
+                todos_objetos,
+                default=todos_objetos[:3]
             )
 
         if sel_objs:
+            emp_proprio_col = df_full['Empregado Próprio'].astype(str).str.strip().str.lower()
+            inter_pag_col = df_full['Terceirizada / Inter Pag'].astype(str).str.lower().fillna('')
+
             if tipo_empregado == "Próprio":
-                df_filtrado = df_full[df_full['Empregado Próprio'].astype(str).str.strip().str.lower() == 'sim'].copy()
+                df_filtrado = df_full[emp_proprio_col == 'sim'].copy()
             elif tipo_empregado == "Terceirizado":
-                df_filtrado = df_full[df_full['Empregado Próprio'].astype(str).str.strip().str.lower() == 'não'].copy()
+                df_filtrado = df_full[emp_proprio_col == 'não'].copy()
+            elif tipo_empregado == "Inter Pag":
+                df_filtrado = df_full[inter_pag_col.str.contains('inter pag', na=False)].copy()
             else:
                 df_filtrado = df_full.copy()
 
-            # Filtro por objeto
-            mask = pd.Series(True, index=df_filtrado.index)
-            for o in sel_objs:
-                mask &= df_filtrado[obj_col].astype(str).str.contains(o, na=False)
+
+            # Mantendo o filtro "AND" (processos que possuem TODOS os objetos selecionados)
+            def contem_todos_os_pedidos(objetos_celula, pedidos_selecionados):
+                objetos = [x.strip() for x in str(objetos_celula).split('|')]
+                return all(pedido in objetos for pedido in pedidos_selecionados)
+
+
+            mask = df_filtrado[obj_col].apply(lambda x: contem_todos_os_pedidos(x, sel_objs))
             df_obj = df_filtrado[mask].copy()
 
             cols_show = ['Nº processo principal', 'Adverso principal', 'Empregado Próprio', obj_col]
@@ -395,13 +459,12 @@ with tab2:
             )
             st.dataframe(df_obj[cols_show].reset_index(drop=True), use_container_width=True)
 
-    else:
-        st.warning("Coluna de objetos não encontrada.")
+        else:
+            st.warning("Coluna de objetos não encontrada.")
 
     # --- Radar com objetos procedentes e parcialmente procedentes ---
     st.markdown("---")
-    st.markdown("<h2 style='color:#201747'>Radar de Objetos em Casos Procedentes e Parcialmente Procedentes</h2>",
-                unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#201747'>Radar de Objetos em Casos Procedentes e Parcialmente Procedentes</h2>", unsafe_allow_html=True)
 
     procedentes_df = df_full[
         df_full['Procedência Atual'].astype(str).str.strip().str.lower().isin(['procedente', 'parcialmente procedente'])
@@ -484,7 +547,7 @@ with tab3:
     st.plotly_chart(fig_emp, use_container_width=True)
 
     # Evolução temporal dos processos por terceirizada
-    st.markdown("## Evolução no número de Processos por Terceirizada")
+    st.markdown("## Evolução no Número de Processos por Terceirizada")
 
     colunas_necessarias = [
         'Data da Distribuição',
@@ -574,19 +637,26 @@ with tab4:
 
     # Lista de processos
     st.markdown("## Lista de Processos Inter Pag")
+
+    # Cria coluna "Trânsito em Julgado" com "Sim" ou "Não"
+    interpag_df = interpag_df.copy()
+    interpag_df['Trânsito em Julgado'] = interpag_df['Transito em Julgado'].astype(str).str.strip().str.lower().map(
+        lambda x: 'Sim' if x == 'sim' else 'Não')
+
     df_exibe = interpag_df[[
         'Nº processo principal',
         'Comarca',
         'Adverso principal',
-        'Terceirizada / Inter Pag'
+        'Trânsito em Julgado'
     ]].copy()
 
     df_exibe.columns = [
         'Número do Processo',
         'Comarca',
         'Reclamante',
-        'Empresa Terceirizada'
+        'Trânsito em Julgado'
     ]
+
     st.dataframe(df_exibe.reset_index(drop=True), use_container_width=True, height=300)
 
     # Evolução temporal dos processos Inter Pag
@@ -648,6 +718,37 @@ with tab4:
         )
 
         st.plotly_chart(fig_linha, use_container_width=True)
+
+        st.markdown("## Top 5 Objetos de Pedidos (Inter Pag)")
+
+        obj_cols_inter = [c for c in interpag_df.columns if 'objeto' in c.lower()]
+        if obj_cols_inter:
+            obj_col_inter = obj_cols_inter[0]
+            s_inter = interpag_df[obj_col_inter].dropna().astype(str).str.split('|').explode().str.strip()
+            obj_counts_inter = s_inter.value_counts().reset_index()
+            obj_counts_inter.columns = ['Objeto', 'Incidência']
+
+            top5_inter = obj_counts_inter.head(5)
+
+            fig_pie_inter = px.pie(
+                top5_inter,
+                names='Objeto',
+                values='Incidência',
+                color_discrete_sequence=px.colors.sequential.Oranges,
+                hole=0.3
+            )
+            # Remove texto de dentro da pizza
+            fig_pie_inter.update_traces(
+                textinfo='percent'
+            )
+            fig_pie_inter.update_layout(
+                showlegend=True,
+                plot_bgcolor="white",
+                paper_bgcolor="white"
+            )
+            st.plotly_chart(fig_pie_inter, use_container_width=True)
+        else:
+            st.warning("Coluna de objetos não encontrada para gerar o gráfico.")
 
 # --- Aba Análise de Acordos ---
 with tab5:
@@ -744,17 +845,20 @@ with tab5:
 
         # Detalhamento
         st.markdown("### Detalhamento de Acordos")
-        acordos_df['label'] = acordos_df['Adverso principal'] + ' - R$ ' + acordos_df[valor_col].map('{:,.2f}'.format)
-        acordos_df_sorted = acordos_df.sort_values(by=econ_col, ascending=False)
-        selecao = st.selectbox("Selecione um Reclamante (Valor do Acordo)", acordos_df_sorted['label'], index=0)
+
+        # Ordena pelo Proveito Econômico (econ_col), do maior para o menor
+        acordos_df_sorted = acordos_df.sort_values(by=econ_col, ascending=False).copy()
+        acordos_df_sorted['label'] = acordos_df_sorted['Adverso principal'] + ' - R$ ' + acordos_df_sorted[
+            econ_col].map('{:,.2f}'.format)
+
+        selecao = st.selectbox("Selecione um Reclamante (Proveito Econômico)", acordos_df_sorted['label'], index=0)
 
         if selecao:
-            linha = acordos_df[acordos_df['label'] == selecao]
+            linha = acordos_df_sorted[acordos_df_sorted['label'] == selecao]
             cols_mostrar = [
                 'Nº processo principal',
                 'Adverso principal',
                 'Comarca',
-                'Empregado Próprio',
                 valor_col,
                 liqui_col,
                 econ_col
@@ -764,7 +868,6 @@ with tab5:
                 'Nº Processo',
                 'Reclamante',
                 'Comarca',
-                'Empregado Próprio',
                 'Valor do Acordo',
                 'Liquidação Inicial',
                 'Proveito Econômico'
@@ -805,11 +908,55 @@ with tab6:
     total_bruto = df_com_deducao[col_sem].sum()
     total_deduzido = df_com_deducao['Deduções CCT'].sum()
     percentual_medio = (total_deduzido / total_bruto) * 100 if total_bruto > 0 else 0
+    total_com_deducao = total_bruto - total_deduzido
 
     k1, k2 = st.columns(2)
     k1.metric("Total Reduzido pela Cláusula 11ª",
               f"R$ {total_deduzido:,.2f}".replace(",", "v").replace(".", ",").replace("v", "."))
     k2.metric("Redução Média Percentual", f"{percentual_medio:.1f}%")
+
+    # --- NOVO: Gráfico de barras comparativo (padrão do dashboard) ---
+    economia_label = f"Economia (R$ {total_deduzido:,.2f} – {percentual_medio:.1f}%)".replace(",", "v").replace(".",
+                                                                                                                ",").replace(
+        "v", ".")
+    df_resumo = pd.DataFrame({
+        "Categoria": ["Total sem dedução", "Total com dedução", economia_label],
+        "Valor": [total_bruto, total_com_deducao, total_deduzido]
+    })
+
+    # Paleta: cinza claro, cinza claro, laranja
+    cores = ["#FF6600", "#FF6600", "#FF6600"]
+
+    # Formata os valores para texto antes de plotar
+    df_resumo['ValorFmt'] = df_resumo['Valor'].apply(
+        lambda x: f"R$ {x:,.2f}".replace(",", "v").replace(".", ",").replace("v", "."))
+
+    fig_resumo = px.bar(
+        df_resumo,
+        x="Categoria",
+        y="Valor",
+        text="ValorFmt",
+        color="Categoria",
+        color_discrete_sequence=cores,
+        labels={'Valor': 'R$'}
+    )
+    fig_resumo.update_traces(
+        textposition='outside',
+        hovertemplate='%{x}<br>R$ %{y:,.2f}<extra></extra>'
+    )
+
+    fig_resumo.update_layout(
+        showlegend=False,
+        yaxis_title='Valor (R$)',
+        xaxis_title='',
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=30, r=30, t=60, b=20),
+        title={'text': 'Resumo: Dedução pela Cláusula 11ª', 'x': 0.5},
+        font=dict(family="Open Sans", size=14)
+    )
+    st.plotly_chart(fig_resumo, use_container_width=True)
+    # --- FIM DO NOVO GRÁFICO ---
 
     # Gráfico – Top 10 maiores deduções
     st.markdown("## Top 10 Processos com Maior Dedução")
@@ -862,9 +1009,10 @@ with tab6:
         linha.index = ['']
         st.dataframe(linha, use_container_width=True)
 
+
 # --- Aba Êxito (Improcedência) ---
 with tab7:
-    st.markdown("# Análise de Casos Improcedentes e Economia Processual")
+    st.markdown("# Análise de Êxito (Total ou Parcial) e Economia Processual")
 
     # Prepara base
     df = df_full.copy()
@@ -899,19 +1047,26 @@ with tab7:
     st.markdown("### Resumo")
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Improcedentes", total_improcedentes)
-    col2.metric("Improcedentes Não Julgados", len(nao_transitados_df))
-    col3.metric("Improcedentes Julgados", total_improcedentes - len(nao_transitados_df))
+    col2.metric("Improcedentes Ativos", len(nao_transitados_df))
+    col3.metric("Improcedentes Trânsito em Julgado", total_improcedentes - len(nao_transitados_df))
 
     col4, col5 = st.columns(2)
-    col4.metric("Economia Concreta (Improcedentes Julgados)",
+    col4.metric("Economia Concreta (Trânsitado em Julgado)",
                 f"R$ {soma_economia_concreta:,.2f}".replace(",", "v").replace(".", ",").replace("v", "."))
-    col5.metric("Economia Potencial (Todos Não Julgados)",
+    col5.metric("Economia Potencial (Ativos)",
                 f"R$ {soma_economia_potencial:,.2f}".replace(",", "v").replace(".", ",").replace("v", "."))
 
     # --- Detalhamento por processo improcedente ---
     st.markdown("### Detalhamento dos Casos Improcedentes")
-    improcedentes_df['label'] = improcedentes_df['Adverso principal'] + ' - ' + improcedentes_df['Comarca']
-    selecao = st.selectbox("Selecione um Reclamante", improcedentes_df['label'].sort_values(), index=0)
+
+    # Cria o label do dropdown: "Reclamante - Sim/Não"
+    improcedentes_df['label'] = (
+            improcedentes_df['Adverso principal'] + ' - ' +
+            improcedentes_df['Transito em Julgado'].astype(str).str.strip().str.lower().map(
+                lambda x: 'Sim' if x == 'sim' else 'Não'
+            )
+    )
+    selecao = st.selectbox("Selecione um Reclamante (Trânsitou em Julgado?)", improcedentes_df['label'].sort_values(), index=0)
 
     if selecao:
         linha = improcedentes_df[improcedentes_df['label'] == selecao]
@@ -921,7 +1076,7 @@ with tab7:
             'Comarca',
             'Procedência Atual',
             'Transito em Julgado',
-            'Acordo',
+            'Empregado Próprio',
             'Economia Potencial',
             'Economia Concreta'
         ]].copy()
@@ -932,14 +1087,23 @@ with tab7:
             'Comarca',
             'Decisão',
             'Transitado em Julgado',
-            'Acordo?',
+            'Empregado Próprio?',
             'Economia Potencial',
             'Economia Concreta'
         ]
 
+        # Padroniza resposta como "Sim" ou "Não"
+        tabela['Empregado Próprio?'] = tabela['Empregado Próprio?'].astype(str).str.strip().str.lower().map(
+            lambda x: 'Sim' if x == 'sim' else 'Não'
+        )
+        tabela['Transitado em Julgado'] = tabela['Transitado em Julgado'].astype(str).str.strip().str.lower().map(
+            lambda x: 'Sim' if x == 'sim' else 'Não'
+        )
+
         for col in ['Economia Potencial', 'Economia Concreta']:
             tabela[col] = tabela[col].apply(
-                lambda x: f"R$ {x:,.2f}".replace(",", "v").replace(".", ",").replace("v", "."))
+                lambda x: f"R$ {x:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
+            )
 
         tabela.index = ['']
         st.dataframe(tabela, use_container_width=True)
